@@ -1,0 +1,7 @@
+Things to implement:
+- Crown%
+- Special statistics: Skeet/M2/level
+- Skill ranking:
+  SI kills while NOT capping
+  SI land/shutdown
+  Tank wipes
