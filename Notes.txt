@@ -1,3 +1,5 @@
+http://l4d2statistics.cloudant.com
+
 Things to implement:
 - Crown%
 - Special statistics: Skeet/M2/level
@@ -5,3 +7,9 @@ Things to implement:
   SI kills while NOT capping
   SI land/shutdown
   Tank wipes
+- Simple skill ranking:
+ Players get an ELO, ranked every round?
+ Substitutes split points (even?) with original players
+
+- Math problem of how to divvy up teams
+  70 choices
