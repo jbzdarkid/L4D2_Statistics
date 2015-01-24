@@ -1,16 +1,34 @@
-// example for the socket extension
-
 #include <sourcemod>
 #include <socket>
 
 public Plugin:myinfo = {
-	name = "socket example",
-	author = "Player",
-	description = "This example demonstrates downloading a http file with the socket extension",
-	version = "1.1.0",
+	name = "Set player names from a database",
+	author = "Darkid",
+	description = "Players joining a server will have their nicknames set to a nickname to reduce confusion",
+	version = "1.0",
 	url = "http://www.player.to/"
 };
- 
+
+
+public OnPluginStart() {
+	new Handle:socket = SocketCreate(SOCKET_TCP, OnSocketError);
+	new Handle:hFile = OpenFile("dl.htm", "wb");
+	SocketSetArg(socket, hFile);
+	// connect the socket
+	SocketConnect(socket, OnSocketConnected, OnSocketReceive, OnSocketDisconnected, "www.sourcemod.net", 80)
+}
+
+
+Event:PlayerJoin() {
+	if (IsClientInGame(i) && IsClientConnected(i)) {
+		new String:nickname[64];
+		new String:steamId[64];
+		GetClientAuthString(client, steamId, sizeof(steamId));
+		GetPlayerNickname(nickname, sizeof(nickname), steamId);
+		FakeClientCommand(client, "setinfo name \"%s\"", nickname);
+	}
+}
+
 public OnPluginStart() {
 	// create a new tcp socket
 	new Handle:socket = SocketCreate(SOCKET_TCP, OnSocketError);
