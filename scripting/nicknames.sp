@@ -1,43 +1,43 @@
 #include <sourcemod>
 #include <socket>
+#include <json>
 
 public Plugin:myinfo = {
 	name = "Set player names from a database",
 	author = "Darkid",
 	description = "Players joining a server will have their nicknames set to a nickname to reduce confusion",
 	version = "1.0",
-	url = "http://www.player.to/"
+	url = "https://github.com/jbzdarkid/L4D2_Statistics/blob/master/scripting/nicknames.sp"
 };
 
+/* I want to do a get request to
+ * https://l4d2statistics.cloudant.com/us_test/_design/nickname/_view/nickname?key=\"76561198024979346\"
+ * and then parse the result via JSON.
+ * The result looks like:
+ * {"total_rows":2,"offset":0,"rows":[
+ * {"id":"76561198024979346","key":"76561198024979346","value":"darkid"}
+ * ]}
+ * So I want data["rows"]["value"].
+ */
 
 public OnPluginStart() {
 	new Handle:socket = SocketCreate(SOCKET_TCP, OnSocketError);
 	new Handle:hFile = OpenFile("dl.htm", "wb");
 	SocketSetArg(socket, hFile);
 	// connect the socket
-	SocketConnect(socket, OnSocketConnected, OnSocketReceive, OnSocketDisconnected, "www.sourcemod.net", 80)
+	SocketConnect(socket, OnSocketConnected, OnSocketReceive, OnSocketDisconnected, "l4d2statistics.cloudant.com", 80)
+	HookEvent("player_team", EventHook:PlayerJoin, EventHookMode_PostNoCopy);
 }
 
-
-Event:PlayerJoin() {
-	if (IsClientInGame(i) && IsClientConnected(i)) {
-		new String:nickname[64];
+public PlayerJoin(Handle:event, const String:name[], bool:dontBroadcast) {
+	new client = GetClientOfUserId(GetEventInt(event, "userid"));
+	if (client && IsClientInGame(client) && IsClientConnected(client)) {
 		new String:steamId[64];
 		GetClientAuthString(client, steamId, sizeof(steamId));
+		new String:nickname[64];
 		GetPlayerNickname(nickname, sizeof(nickname), steamId);
 		FakeClientCommand(client, "setinfo name \"%s\"", nickname);
 	}
-}
-
-public OnPluginStart() {
-	// create a new tcp socket
-	new Handle:socket = SocketCreate(SOCKET_TCP, OnSocketError);
-	// open a file handle for writing the result
-	new Handle:hFile = OpenFile("dl.htm", "wb");
-	// pass the file handle to the callbacks
-	SocketSetArg(socket, hFile);
-	// connect the socket
-	SocketConnect(socket, OnSocketConnected, OnSocketReceive, OnSocketDisconnected, "www.sourcemod.net", 80)
 }
 
 public OnSocketConnected(String:url, String:location) {
