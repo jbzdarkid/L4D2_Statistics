@@ -29,19 +29,17 @@ stock PrintToConsoleAll(const String:format[], any:...)
 
 public Action:FindDarkid(client, args) {
 	client = 1;
-	PrintToConsoleAll("[Debug] HI");
-	PrintToConsoleAll("[Debug] Trying to find client 1...");
-	if (client !=0 && IsClientInGame(client) && IsClientConnected(client)) {
+	if (client != 0 && IsClientInGame(client) && IsClientConnected(client)) {
 		new String:steamId[64];
 		GetClientAuthString(client, steamId, sizeof(steamId));
-		PrintToConsoleAll("[Debug] Player %d name: %s", client, steamId);
-		new String:shortId[8];
-		for (new i=10; i<18; i++) {
-			shortId[i-10] = steamId[i];
+		new String:shortId[9];
+		for (new i=0; i<sizeof(shortId); i++) {
+			shortId[i] = steamId[i+10];
 		}
-		PrintToConsoleAll("[Debug] Short id: %s", shortId);
-		new Handle:request = SteamWorks_CreateHTTPRequest(k_EHTTPMethodGET, "http://l4d2statistics.cloudant.com/us_test/_design/nickname/_view/nickname");
-		SteamWorks_SetHTTPRequestGetOrPostParameter(request, "key", steamId);
+		PrintToConsoleAll("[Debug] Steam Short id: %s", shortId);
+		PrintToConsoleAll("[Debug]");
+		new Handle:request = SteamWorks_CreateHTTPRequest(k_EHTTPMethodGET, "https://l4d2statistics.cloudant.com/us_test/_design/nickname/_view/nickname");
+		// SteamWorks_SetHTTPRequestGetOrPostParameter(request, "key", steamId);
 		SteamWorks_SetHTTPRequestGetOrPostParameter(request, "format", "txt" );
 		SteamWorks_SetHTTPCallbacks(request, NicknameCallback);
 		SteamWorks_SendHTTPRequest(request);
@@ -53,7 +51,13 @@ public NicknameCallback(Handle:hRequest, bool:bFailure, bool:bRequestSuccessful,
 	SteamWorks_GetHTTPResponseBodySize(hRequest, requestSize);
 	decl String:requestResponse[requestSize];
 	SteamWorks_GetHTTPResponseBodyData(hRequest, requestResponse, requestSize);
-	PrintToConsoleAll("%s", requestResponse);
+	new nickLength = requestSize-87;
+	new String:nickname[nickLength];
+	for (new i=0; i<nickLength-1; i++) {
+		nickname[i] = requestResponse[i+80];
+	}
+	nickname[nickLength-1] = 0;
+	PrintToConsoleAll("Nickname: %s", nickname);
 	// JSON:JsonResponse = json_decode(requestResponse)
 	// decl JSON:Rows;
 	// json_get_cell(JsonResponse, "rows", *Rows)
