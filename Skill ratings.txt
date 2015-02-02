@@ -1,0 +1,17 @@
+Updating a rating:
+Players ABCD fights Players EFGH
+
+Approximated skill level S = (E+F+G+H)/4 + ScoreDifference
+
+A = (31*A+S)/32 [K factor of 32]
+
+Starting rating is 10k -- it is not possible to lose by 10k.
+
+This formula means that if you lose a game by 500 points against someone who is 1000 points above you, you gain points, since you didn't lose as badly as expected.
+
+
+Sample: Our team has average rating 10k versus a really good team with rating 12k.
+
+We lose by 1000 points.
+
+My skill is 10k -> (310000 + 12000 - 1000)/32 = 10031. I gain 31 points. This sounds reasonable.

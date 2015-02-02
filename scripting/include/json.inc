@@ -1,5 +1,6 @@
 // Originally by Exolent[jNr] (https://forums.alliedmods.net/showthread.php?t=189772)
 // Ported from AMXX pawn to SourceMod sourcepawn by Nicholas Hastings
+// Decoding fixed by Nikkii (https://forums.alliedmods.net/showpost.php?p=1914836&postcount=10)
 
 #if defined _json_included
 	#endinput
@@ -314,7 +315,7 @@ JSON_FUNC bool:json_get_array2(JSON:object, const String:key[], &Handle:output, 
 	return ( index > 0 );
 }
 
-JSON_FUNC bool:json_get_string(JSON:object, const String:key[], output[], len)
+JSON_FUNC bool:json_get_string(JSON:object, const String:key[], String:output[], len)
 {
 	if( object == JSON_INVALID )
 	{
@@ -498,7 +499,7 @@ JSON_FUNC JSON:json_decode(const String:string[], &pos=0, len=0)
 					}
 				}
 				
-				key_len = pos - key_start;
+				key_len = pos - key_start + 1;
 				
 				if( !key_len )
 				{
@@ -593,8 +594,6 @@ JSON_FUNC JSON:json_decode(const String:string[], &pos=0, len=0)
 									__json_string[ string_len++ ] = string[ pos ];
 								}
 							}
-							
-							pos++;
 						}
 						
 						if( !string_len )
@@ -602,6 +601,8 @@ JSON_FUNC JSON:json_decode(const String:string[], &pos=0, len=0)
 							json_destroy( json );
 							return JSON_INVALID;
 						}
+						
+						__json_string[ string_len ] = EOS;
 						
 						strcopy( __json_key, min( sizeof( __json_key ), key_len ), string[ key_start ] );
 						
@@ -612,11 +613,14 @@ JSON_FUNC JSON:json_decode(const String:string[], &pos=0, len=0)
 						// Read true/false, integer, or float
 						string_start = pos;
 						
-						while( ++pos < len && !isspace( string[ pos ] ) ) { }
+						while(pos < len && !isspace( string[ pos ] ) && !iscontrol( string[ pos ] ) ) {
+							pos++;
+						}
 						
 						string_len = pos - string_start;
+						__json_string[string_len + 1] = '\0';
 						
-						strcopy( __json_string, min( sizeof( __json_string ), string_len ), string[ string_start ] );
+						strcopy( __json_string, min( sizeof( __json_string ), string_len == -1 ? string_len : string_len + 1 ), string[ string_start ] );
 						
 						if( !strcmp( __json_string, "true", false ) || !strcmp( __json_string, "false", false ) )
 						{
@@ -810,8 +814,6 @@ JSON_FUNC Handle:__json_read_array(const String:string[], len, &pos, &size, &Han
 							__json_string[ string_len++ ] = string[ pos ];
 						}
 					}
-					
-					pos++;
 				}
 				
 				if( failed )
@@ -832,7 +834,9 @@ JSON_FUNC Handle:__json_read_array(const String:string[], len, &pos, &size, &Han
 				// Read true/false, integer, or float
 				string_start = pos;
 				
-				while( ++pos < len && !isspace( string[ pos ] ) ) { }
+				while( pos < len && !isspace( string[ pos ] ) && !iscontrol( string[ pos ]) ) {
+					pos++;
+				}
 				
 				string_len = pos - string_start;
 				
@@ -1101,6 +1105,16 @@ static JSON_FUNC isspace( c )
 		|| c == '\r'
 		|| c == '\v'
 		|| c == '\f'
+	;
+}
+
+static JSON_FUNC iscontrol( c )
+{
+	return c == ','
+		|| c == '{'
+		|| c == '}'
+		|| c == '['
+		|| c == ']'
 	;
 }
 

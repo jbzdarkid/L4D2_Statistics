@@ -1,15 +1,40 @@
 http://l4d2statistics.cloudant.com
 
 Things to implement:
-- Crown%
-- Special statistics: Skeet/M2/level
-- Skill ranking:
-  SI kills while NOT capping
-  SI land/shutdown
-  Tank wipes
-- Simple skill ranking:
- Players get an ELO, ranked every round?
- Substitutes split points (even?) with original players
+- Random captains
+- Auto captains (top two players, first pick should be a weighted flip)
+- Random teams
+- Auto teams (Knapsack problem, so just use brute force -- 35 options:
+1234, 1235, 1236, 1237, 1238
+1245, 1246, 1247, 1248, 1278
+1256, 1257, 1258, 1267, 1268
+1345, 1346, 1347, 1348, 1378
+1356, 1357, 1358, 1367, 1368
+1456, 1457, 1458, 1467, 1468
+1478, 1567, 1568, 1578, 1678
+)
 
-- Math problem of how to divvy up teams
-  70 choices
+- Track certain "clean" statistics:
+  Witch crown%
+  ? I don't want level/skeet here, since those can make players feel bad if they don't hit a quota per game
+    eTronic suggestion: Track all SI shutdowns to remove pressure.
+  ? Average speed has a similar problem, may encourage rushing too much
+  FF is good, average per round.
+  Weapon choice (versus time, I guess? Or percentage of map...)
+  
+  
+  
+  
+- Notes about witch crowns:
+  Two types of credit: Full and partial. To calculate full credit, sum all damage dealt = T, find all people who dealt > T-1000 damage.
+  Example:
+  A: 500
+  B: 200
+  C: 700
+  T = 1400, so A and C get full credit.
+  However, there is a circumstance where assist damage was necessary but could have been from multiple sources:
+  A: 200
+  B: 200
+  C: 900
+  T = 1300, so A and B do not get credit. One of them needed to deal damage, so we calculate S = sum of people who got full credit.
+  S = 900, and we give partial credit to anyone who is ≥ 1000-S. In this case, A and B.
