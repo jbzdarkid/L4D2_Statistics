@@ -15,26 +15,40 @@ Things to implement:
 )
 
 - Track certain "clean" statistics:
-  Witch crown%
-  ? I don't want level/skeet here, since those can make players feel bad if they don't hit a quota per game
-    eTronic suggestion: Track all SI shutdowns to remove pressure.
-  ? Average speed has a similar problem, may encourage rushing too much
+  Witch crown% (see below)
+  Tank damage
+  Statistics:
+    Times killed (NB: Before the SI has capped)
+    Times incapped by
+    Times downed by
+    Times killed by
+    And the same as SI.
   FF is good, average per round.
-  Weapon choice (versus time, I guess? Or percentage of map...)
-  
-  
-  
-  
+  Weapon usage. Every time round starts, start clock. On pickup, out of ammo, death, or saferoom, stop clock.
+
 - Notes about witch crowns:
-  Two types of credit: Full and partial. To calculate full credit, sum all damage dealt = T, find all people who dealt > T-1000 damage.
-  Example:
-  A: 500
-  B: 200
-  C: 700
-  T = 1400, so A and C get full credit.
-  However, there is a circumstance where assist damage was necessary but could have been from multiple sources:
-  A: 200
-  B: 200
-  C: 900
-  T = 1300, so A and B do not get credit. One of them needed to deal damage, so we calculate S = sum of people who got full credit.
-  S = 900, and we give partial credit to anyone who is ≥ 1000-S. In this case, A and B.
+  Three things to track: Kills, assists, and chip.
+  enum credit {
+    NONE = 0;
+    KILL = 1;
+    ASSIST = 2;
+    CHIP = 3;
+  }
+  new WitchHP = 1000 - infectedDmg;
+  new survivorDmg[4] = {600, 300, 200, 200};
+  new survivorCredit[4] = credit:NONE;
+  new totalDmg = 0;
+  for (new i=0; i<4; i++) {
+    if (survivorDmg[i] > witchHP) {
+      survivorCredit[i] = credit:KILL;
+      return;
+    }
+    totalDmg += survivorDmg[i]; 
+  }
+  for (new i=0; i<4; i++) {
+    if (survivorDmg[i] > totalDmg - witchHP) {
+      survivorCredit[i] = credit:ASSIST;
+    } else {
+      survivorCredit[i] = credit:CHIP;
+    }
+  }
