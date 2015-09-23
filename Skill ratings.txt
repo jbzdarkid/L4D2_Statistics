@@ -1,17 +1,60 @@
+N.B. This system allows that even if you lose, if you lose by less than the skill difference (i.e. difference between your score and enemy team score), you gain points.
+
 Updating a rating:
 Players ABCD fights Players EFGH
 
-Approximated skill level S = (E+F+G+H)/4 + ScoreDifference
+Approximated skill level S = (E+F+G+H)/4
+SD = ScoreDifference
+S-A+SD = Point shift
 
-A = (31*A+S)/32 [K factor of 32]
+A = (A<<7+(S-A+SD))>>7 [K factor of 128]
 
 Starting rating is 10k -- it is not possible to lose by 10k.
 
-This formula means that if you lose a game by 500 points against someone who is 1000 points above you, you gain points, since you didn't lose as badly as expected.
-
-
 Sample: Our team has average rating 10k versus a really good team with rating 12k.
-
 We lose by 1000 points.
+My skill is 10k -> (10 000<<7 + 12000 - 10000 - 1000)>>7 = 10008. I gain 8 points for losing.
 
-My skill is 10k -> (310000 + 12000 - 1000)/32 = 10031. I gain 31 points. This sounds reasonable.
+Notes about zero-sum:
+The system is zero sum if A+B+C+D+E+F+G+H is the same before and after.
+
+let R = (A+B+C+D)/4 + SD
+let S = (E+F+G+H)/4 - SD
+
+(31*A+S)/32+(31*B+S)/32+(31*C+S)/32+(31*D+S)/32 =
+(31*A+31*B+31*C+31*D+4S)/32 =
+31(A+B+C+D)/32 + (E+F+G+H)/32 + SD/8
+
+By similar logic,
+(31*E+R)/32+(31*F+R)/32+(31*G+R)/32+(31*H+R)/32 =
+31(E+F+G+H)/32 + (A+B+C+D)/32 - SD/8
+
+31(A+B+C+D)/32 + (E+F+G+H)/32 + SD/8 + 31(E+F+G+H)/32 + (A+B+C+D)/32 - SD/8 =
+31(A+B+C+D+E+F+G+H)/32 + (A+B+C+D+E+F+G+H)/32 =
+A+B+C+D+E+F+G+H
+QED
+
+
+Score diff should be calculated per round, since servers crash, ggs happen early, and players sub in and out.
+
+
+-- calculations with k=32 --
+Is losing 100, losing 100, gaining 200 => net 0?
+
+Assuming all players start at 10k
+R1 sees A, B, C, D go to 9996.875
+E, F, G, H go to 10003.125
+R2 sees A, B, C, D go to 9993.945
+E, F, G, H go to 10006.055
+R3 sees A, B, C, D go to 10000.573
+E, F, G, H go to 9999.427
+
+Slight advantage (~.28%) given to underdog FOR EVEN PLAYERS
+
+Assuming team 1 is at 10k and team 2 is at 12k
+R1 sees A, B, C, D go to 10059.375
+E, F, G, H go to 11934.375
+R2 sees A, B, C, D go to 10114.844
+E, F, G, H go to 11872.656
+R3 sees A, B, C, D go to 10176.026
+E, F, G, H go to 11823.974
