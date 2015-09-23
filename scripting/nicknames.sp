@@ -19,14 +19,20 @@ public OnPluginStart() {
 	dataStore = CreateKeyValues("");
 	HookEvent("player_connect", OnPlayerJoin);
 	RegConsoleCmd("sm_nicknames", GetNicknames, "Print to the client a list of player nicknames");
+	new Handle:socket = SocketCreate(SOCKET_TCP, OnSocketError);
+}
+
+public OnSocketDisconnected(Handle:socket, any:hFile) {
+	CloseHandle(socket);
+}
+
+public OnSocketError(Handle:socket, const errorType, const errorNum, any:hFile) {
+	LogError("socket error %d (errno %d)", errorType, errorNum);
+	CloseHandle(socket);
 }
 
 // Strips out the "value" from the json response. If no data, makes a post request with the player's current name.
-public GetServerInfo(Handle:request, String:output[], String:steamId[]) {
-	new requestSize;
-	SteamWorks_GetHTTPResponseBodySize(request, requestSize);
-	new String:requestResponse[requestSize];
-	SteamWorks_GetHTTPResponseBodyData(request, requestResponse, requestSize);
+public GetServerInfo(String:requestResponse, requestSize, String:output[], String:steamId[]) {
 	new JSON:JsonResponse = json_decode(requestResponse);
 	json_get_cell(JsonResponse, "rows", JsonResponse);
 	json_get_cell(JsonResponse, "0", JsonResponse);
@@ -50,19 +56,35 @@ public OnPlayerJoin(Handle:event, const String:name[], bool:dontBroadcast) {
 	local_OnPlayerJoin(client);
 }
 local_OnPlayerJoin(client) {
-	if (client == 0 || !IsClientInGame(client) || !IsClientConnected(client)) return;
+	if (client == 0 || !IsClientInGame(client) || IsFakeClient(client)) return;
 	new String:steamId[9];
 	GetSteamId(client, steamId);
 	if (KvJumpToKey(dataStore, steamId)) return; // Player already has local data
-	new String:quotedSteamId[10];
-	quotedSteamId[0] = 34; // The " character
-	strcopy(quotedSteamId[1], 9, steamId);
-	quotedSteamId[9] = 34;
-	new Handle:request = SteamWorks_CreateHTTPRequest(k_EHTTPMethodGET, "https://l4d2statistics.cloudant.com/us_test/_design/nickname/_view/nickname");
-	SteamWorks_SetHTTPRequestGetOrPostParameter(request, "key", quotedSteamId);
-	SteamWorks_SetHTTPRequestGetOrPostParameter(request, "format", "txt" );
-	SteamWorks_SetHTTPCallbacks(request, NicknameCallback);
-	SteamWorks_SendHTTPRequest(request);
+	SocketConnect(socket, NicknameConnected, NicknameCallback, OnSocketDisconnected, "www.l4d2statistics.cloudant.com", 80);
+}
+
+/*
+	PUT /us_test/32357809 HTTP/1.0
+	Host: l4d2statistics.cloudant.com
+	Content-Length: %d
+	Content-Type: application/json
+	
+	{
+	  %22_id%22:%22%s%22,
+	  %22_rev%22:%22%s%22,
+	  %22nickname%22:%22%s%22,
+	}", size, steamId, rev, nickname
+*/
+
+/*
+	"COPY /us_test/default HTTP/1.1
+	Destination: %s", steamId
+*/
+
+public NicknameConnected(Handle:socket) {
+	decl String:requestStr[256];
+	Format(requestStr, sizeof(requestStr), "GET /us_test/_design/nickname/_view/nickname?key=%22%s%22\n\rHost: l4d2statistics.cloudant.com\n\rConnection: close", steamId);
+	SocketSend(socket, requestStr);
 }
 
 public Action:GetNicknames(client, args) {
@@ -70,7 +92,7 @@ public Action:GetNicknames(client, args) {
 		if (!IsClientInGame(target) || !IsClientConnected(target)) continue;
 		new String:steamId[9];
 		GetSteamId(target, steamId);
-		if (strcmp(steamId, "") == 0) continue;
+		if (strcmp(steamId, "") == 0) continue; // Mostly bots
 		if (!KvJumpToKey(dataStore, steamId)) {
 			local_OnPlayerJoin(target);
 			PrintToChat(client, "Failed to find nickname for '%N'", target);
@@ -83,10 +105,11 @@ public Action:GetNicknames(client, args) {
 	}
 }
 	
-public NicknameCallback(Handle:hRequest, bool:bFailure, bool:bRequestSuccessful, EHTTPStatusCode:eStatusCode) {
+public NicknameCallback(Handle:socket, String:receiveData[], const dataSize) {
 	new String:nickname[128];
 	new String:steamId[64];
-	GetServerInfo(hRequest, nickname, steamId);
+	LogMessage("%d: %s", dataSize, receiveData);
+	GetServerInfo(recieveData, dataSize, nickname, steamId);
 	KvJumpToKey(dataStore, steamId, true);
 	KvSetString(dataStore, steamId, nickname);
 	KvRewind(dataStore);
