@@ -1,3 +1,5 @@
+- Whoever's on a team when the round starts gains/loses ELO. Don't punish substitutes.
+
 N.B. This system allows that even if you lose, if you lose by less than the skill difference (i.e. difference between your score and enemy team score), you gain points.
 
 Updating a rating:

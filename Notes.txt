@@ -1,10 +1,13 @@
 http://l4d2statistics.cloudant.com
+Set up an API key (set in server.cfg)
+Cost is negligible in terms of GET/POST, only worry about 50GB storage.
+Could compress data (yearly?) into the reports we're tracking. This saves space.
 
 Things to implement:
 - Random captains
 - Auto captains (top two players, first pick should be a weighted flip)
 - Random teams
-- Auto teams (Knapsack problem, so just use brute force -- 35 options:
+- Auto teams (Knapsack problem, so just use brute force -- 35 options:)
 1234, 1235, 1236, 1237, 1238
 1245, 1246, 1247, 1248, 1278
 1256, 1257, 1258, 1267, 1268
@@ -12,23 +15,30 @@ Things to implement:
 1356, 1357, 1358, 1367, 1368
 1456, 1457, 1458, 1467, 1468
 1478, 1567, 1568, 1578, 1678
-)
 
 - ELO system:
   Base rank 10 000
-  
 
 - Track certain "clean" statistics:
   Witch crown% (see below)
-  Tank damage
-  Statistics:
+  Tank damage (to/from) -> wipes
+  Generic?:
     Times killed (NB: Before the SI has capped)
+    Times pinned by
     Times incapped by
-    Times downed by
     Times killed by
     And the same as SI.
+  SI Kills / SI Damage
   FF is good, average per round.
-  Weapon usage. Every time round starts, start clock. On pickup, out of ammo, death, or saferoom, stop clock.
+
+- What to write down?
+
+  Literally every player_hurt. -> Player who dealt damage, weapon used, player hit (UID?), kill (0/1), Timestamp.
+  Tank wipes.
+  Time spent while pinned.
+
+  Weapon usage (Time)
+  Weapon pickup (found pills, molotov)
 
 - Notes about witch crowns:
   Three things to track: Kills, assists, and chip.
