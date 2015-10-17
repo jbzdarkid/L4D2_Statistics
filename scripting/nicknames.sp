@@ -1,49 +1,32 @@
-// When a player joins, get their data.
-// Store it somehow?
-// When a player's data fails to load, do a post request to save their current nickname.
 #include <sourcemod>
-#include <json>
-#include <SteamWorks>
+#include <sdktools>
+#include <socket>
+#include <EasyJSON>
+#pragma semicolon 1
+
+#define NAME_SIZE 256
 
 public Plugin:myinfo = {
-	name = "Database statistics",
+	name = "Nickname Tracker",
 	author = "Darkid",
-	description = "Players can get a list of tracked statistics from a server.",
-	version = "2.0",
-	url = "https://github.com/jbzdarkid/L4D2_Statistics/blob/master/scripting/nicknames.sp"
+	description = "Players can get a list of the nicknames of active players.",
+	version = "3.1",
+	url = "www.github.com/jbzdarkid/L4D2_Statistics"
 };
 
-new Handle:dataStore;
+new Handle:nicknames;
+new Handle:nicknamesToUpload;
+new Handle:renamePlayers;
 
 public OnPluginStart() {
-	dataStore = CreateKeyValues("");
-	HookEvent("player_connect", OnPlayerJoin);
-	RegConsoleCmd("sm_nicknames", GetNicknames, "Print to the client a list of player nicknames");
-	new Handle:socket = SocketCreate(SOCKET_TCP, OnSocketError);
+	nicknames = CreateTrie();
+	nicknamesToUpload = CreateStack(64);
+	HookEvent("player_team", PlayerTeam);
+	HookEvent("round_end", RoundEnd);
+	renamePlayers = CreateConVar("rename_players", "Rename players to their given nickname when they join.", "1");
 }
 
-public OnSocketDisconnected(Handle:socket, any:hFile) {
-	CloseHandle(socket);
-}
-
-public OnSocketError(Handle:socket, const errorType, const errorNum, any:hFile) {
-	LogError("socket error %d (errno %d)", errorType, errorNum);
-	CloseHandle(socket);
-}
-
-// Strips out the "value" from the json response. If no data, makes a post request with the player's current name.
-public GetServerInfo(String:requestResponse, requestSize, String:output[], String:steamId[]) {
-	new JSON:JsonResponse = json_decode(requestResponse);
-	json_get_cell(JsonResponse, "rows", JsonResponse);
-	json_get_cell(JsonResponse, "0", JsonResponse);
-	if (JsonResponse == JSON_INVALID) {
-		// Do a post request here
-	}
-	json_encode(JsonResponse, requestResponse, requestSize);
-	strcopy(output, requestSize-86, requestResponse[43]);
-	strcopy(steamId, 9, requestResponse[24]);
-}
-
+// Truncates off the STEAM_1:X: from steam names.
 GetSteamId(client, String:output[]) {
 	new String:steamId[20];
 	GetClientAuthString(client, steamId, sizeof(steamId));
@@ -51,66 +34,122 @@ GetSteamId(client, String:output[]) {
 	output[9] = 0;
 }
 
-public OnPlayerJoin(Handle:event, const String:name[], bool:dontBroadcast) {
+public PlayerTeam(Handle:event, const String:name[], bool:dontBroadcast) {
 	new client = GetClientOfUserId(GetEventInt(event, "userid"));
-	local_OnPlayerJoin(client);
-}
-local_OnPlayerJoin(client) {
-	if (client == 0 || !IsClientInGame(client) || IsFakeClient(client)) return;
-	new String:steamId[9];
+	if (client <= 0 || client > MaxClients) return;
+	if (!IsClientInGame(client)) return;
+	if (IsFakeClient(client)) return;
+	if (GetEventInt(event, "oldteam") != 0) return;
+	decl String:steamId[64];
 	GetSteamId(client, steamId);
-	if (KvJumpToKey(dataStore, steamId)) return; // Player already has local data
-	SocketConnect(socket, NicknameConnected, NicknameCallback, OnSocketDisconnected, "www.l4d2statistics.cloudant.com", 80);
+	decl String:ign[NAME_SIZE];
+	if (GetTrieString(nicknames, steamId, ign, NAME_SIZE)) return;
+	GetClientName(client, ign, NAME_SIZE);
+	new Handle:socket = SocketCreate(SOCKET_TCP, SocketError);
+	SocketConnect(socket, GetNicknameQuery, GetNicknameResponse, SocketClosed, "l4d2statistics.cloudant.com", 80);
 }
 
-/*
-	PUT /us_test/32357809 HTTP/1.0
-	Host: l4d2statistics.cloudant.com
-	Content-Length: %d
-	Content-Type: application/json
-	
-	{
-	  %22_id%22:%22%s%22,
-	  %22_rev%22:%22%s%22,
-	  %22nickname%22:%22%s%22,
-	}", size, steamId, rev, nickname
-*/
-
-/*
-	"COPY /us_test/default HTTP/1.1
-	Destination: %s", steamId
-*/
-
-public NicknameConnected(Handle:socket) {
-	decl String:requestStr[256];
-	Format(requestStr, sizeof(requestStr), "GET /us_test/_design/nickname/_view/nickname?key=%22%s%22\n\rHost: l4d2statistics.cloudant.com\n\rConnection: close", steamId);
+public GetNicknameQuery(Handle:socket, any:jsonData) {
+	PrintToServer("GetNicknameQuery");
+	decl String:requestStr[1024];
+	// GET /nicknames/32356809 HTTP/1.1
+	// Host: l4d2statistics.cloudant.com
+	// Accept: */*
+	//
+	//
+	Format(requestStr, sizeof(requestStr), "GET /nicknames/%s HTTP/1.1\nHost: l4d2statistics.cloudant.com\nAccept: */*\n\n", "32356809");
 	SocketSend(socket, requestStr);
 }
 
-public Action:GetNicknames(client, args) {
-	for (new target=1; target<MAXPLAYERS; target++) {
-		if (!IsClientInGame(target) || !IsClientConnected(target)) continue;
-		new String:steamId[9];
-		GetSteamId(target, steamId);
-		if (strcmp(steamId, "") == 0) continue; // Mostly bots
-		if (!KvJumpToKey(dataStore, steamId)) {
-			local_OnPlayerJoin(target);
-			PrintToChat(client, "Failed to find nickname for '%N'", target);
-			continue;
+public GetNicknameResponse(Handle:socket, String:data[], const dataSize, any:jsonData) {
+	PrintToServer("GetNicknameResponse");
+	new index = StrContains(data, "\r\n\r\n");
+	strcopy(data, dataSize, data[index]);
+	TrimString(data);
+	PrintToServer(data);
+	new Handle:json = DecodeJSON(data);
+	if (json == INVALID_HANDLE) return;
+
+	new String:steamId[64] = "32356809";
+	new String:ign[NAME_SIZE] = "darkid";
+	new client = 0;
+	decl String:error[128];
+	if (JSONGetString(json, "error", error, sizeof(error))) {
+		if (strcmp(error, "not_found") == 0) {
+			PrintToServer("Steam ID %s unknown, adding to upload queue.", steamId);
+			PushStackString(nicknamesToUpload, steamId);
+			new Handle:names = CreateArray(64);
+			PushArrayString(names, ign);
+			SetTrieValue(nicknames, steamId, names);
+		} else {
+			PrintToServer("Error: %s", error);
 		}
-		new String:nickname[64];
-		KvGetString(dataStore, steamId, nickname, sizeof(nickname));
-		KvRewind(dataStore);
-		PrintToChat(client, "'%N' -> '%s'", target, nickname);
+	} else {
+		decl Handle:names;
+		JSONGetArray(json, "names", names);
+		SetTrieValue(nicknames, steamId, names);
+		PrintToServer("Found %d nickname(s) for Steam ID %s", GetArraySize(names), steamId);
+		if (GetConVarBool(renamePlayers)) {
+			new String:nickname[NAME_SIZE];
+			GetArrayString(names, 0, nickname, NAME_SIZE);
+			SetClientInfo(client, "name", nickname);
+		}
 	}
 }
-	
-public NicknameCallback(Handle:socket, String:receiveData[], const dataSize) {
-	new String:nickname[128];
-	new String:steamId[64];
-	LogMessage("%d: %s", dataSize, receiveData);
-	GetServerInfo(recieveData, dataSize, nickname, steamId);
-	KvJumpToKey(dataStore, steamId, true);
-	KvSetString(dataStore, steamId, nickname);
-	KvRewind(dataStore);
+
+public RoundEnd(Handle:event, const String:name[], bool:dontBroadcast) {
+	PrintToServer("RoundEnd");
+	new Handle:socket = SocketCreate(SOCKET_TCP, SocketError);
+	decl String:steamId[64];
+	PopStackString(nicknamesToUpload, steamId, sizeof(steamId));
+	decl Handle:names;
+	GetTrieValue(nicknames, steamId, names);
+	SocketConnect(socket, PutNicknameQuery, PutNicknameResponse, SocketClosed, "l4d2statistics.cloudant.com", 80);
+}
+
+public PutNicknameQuery(Handle:socket, any:jsonData) {
+	PrintToServer("PutNicknameQuery");
+	new String:steamId[64] = "32356809";
+	decl String:requestStr[1024];
+	// PUT /nicknames/32356809 HTTP/1.1
+	// Host: l4d2statistics.cloudant.com
+	// Accept: */*
+	// Content-Length: 20
+	// Content-Type: application/json
+	//
+	// {"names":["darkid"]}
+	new String:request[1024] = "{\"names\":[\"jbzdarkid\"]}";
+	PrintToServer("Length: %d", strlen(request));
+	Format(requestStr, sizeof(requestStr), "PUT /nicknames/%s HTTP/1.1\nHost: l4d2statistics.cloudant.com\nAccept: */*\nContent-Length: %d\nContent-Type: application/json\n\n%s\n", steamId, strlen(request), request);
+	PrintToServer("PutNicknamyQuery:\n");
+	PrintToServer(requestStr);
+	SocketSend(socket, requestStr);
+}
+
+public PutNicknameResponse(Handle:socket, String:data[], const dataSize, any:jsonData) {
+	PrintToServer("PutNicknameResponse");
+	new index = StrContains(data, "\r\n\r\n");
+	strcopy(data, dataSize, data[index]);
+	TrimString(data);
+	new Handle:json = DecodeJSON(data);
+	if (json == INVALID_HANDLE) return;
+
+	new String:steamId[64] = "32356809";
+	decl String:error[128];
+	if (JSONGetString(json, "error", error, sizeof(error))) {
+		PrintToServer("Nickname upload failed: %s", error);
+		PushStackString(nicknamesToUpload, steamId);
+	} else {
+		PrintToServer("Sucessfuly uploaded nickname for Steam ID %s", steamId);
+	}
+}
+
+public SocketClosed(Handle:socket, any:jsonData) {
+	CloseHandle(socket);
+}
+
+public SocketError(Handle:socket, errorType, errorNum, any:jsonData) {
+	PrintToServer("Socket error %d (Type %d)", errorNum, errorType);
+	LogMessage("Socket error %d (Type %d)", errorNum, errorType);
+	CloseHandle(socket);
 }
