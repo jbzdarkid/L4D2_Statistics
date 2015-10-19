@@ -5,13 +5,20 @@ N.B. This system allows that even if you lose, if you lose by less than the skil
 Updating a rating:
 Players ABCD fights Players EFGH
 
+Dolemite says: Change score difference to be percentage-based. 500 points for pro players is not much.
+
 Approximated skill level S = (E+F+G+H)/4
-SD = ScoreDifference
+SD = Score Difference: No longer just W-L. Now (W-L)/L * 100
 S-A+SD = Point shift
 
 A = (A<<7+(S-A+SD))>>7 [K factor of 128]
 
-Starting rating is 10k -- it is not possible to lose by 10k.
+Starting rating is 1k.
+
+
+
+
+
 
 Sample: Our team has average rating 10k versus a really good team with rating 12k.
 We lose by 1000 points.
