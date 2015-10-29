@@ -151,7 +151,7 @@ stock Handle:DecodeArray(const String:json[], &len=0)
 			new Handle:m_hObject = DecodeJSON(json[m_iPos], m_iLen);
 			if(m_hObject != INVALID_HANDLE)
 			{
-				PushArrayCell(m_hArray, JSONCreateObject(m_hObject));
+				JSONPushArrayObject(m_hArray, m_hObject);
 				m_iPos += m_iLen;
 				m_iPos += JSONIgnore(json[m_iPos]);
 			}
@@ -166,7 +166,7 @@ stock Handle:DecodeArray(const String:json[], &len=0)
 			new Handle:m_hObject = DecodeArray(json[m_iPos], m_iLen);
 			if(m_hArray != INVALID_HANDLE)
 			{
-				PushArrayCell(m_hArray, JSONCreateArray(m_hObject));
+				JSONPushArrayArray(m_hArray, m_hObject);
 				m_iPos += m_iLen;
 				m_iPos += JSONIgnore(json[m_iPos]);
 			}
@@ -188,20 +188,20 @@ stock Handle:DecodeArray(const String:json[], &len=0)
 			new m_iDot = 0;
 
 			if(m_iStringStart != 0)
-				PushArrayCell(m_hArray, JSONCreateString(m_szValue));
+				JSONPushArrayString(m_hArray, m_szValue);
 			else if(strcmp(m_szValue, "true")==0)
-				PushArrayCell(m_hArray, JSONCreateBoolean(true));
+				JSONPushArrayBoolean(m_hArray, true);
 			else if(strcmp(m_szValue, "false")==0)
-				PushArrayCell(m_hArray, JSONCreateBoolean(false));
+				JSONPushArrayBoolean(m_hArray, false);
 			else if(JSONIsNumeric(m_szValue))
-				PushArrayCell(m_hArray, JSONCreateInteger(StringToInt(m_szValue)));
+				JSONPushArrayInteger(m_hArray, StringToInt(m_szValue));
 			else if((m_iDot = FindCharInString(m_szValue, '.'))!=-1)
 			{
 				m_szValue[m_iDot] = 0;
 				if(JSONIsNumeric(m_szValue) && JSONIsNumeric(m_szValue[m_iDot+1]))
 				{
 					m_szValue[m_iDot] = '.';
-					PushArrayCell(m_hArray, JSONCreateFloat(StringToFloat(m_szValue)));
+					JSONPushArrayFloat(m_hArray, StringToFloat(m_szValue));
 				}
 			}
 		}
@@ -354,7 +354,6 @@ stock EncodeArray(&Handle:json, String:output[], maxlen, bool:beautify=true, &le
 	}
 
 	new m_iKeys = GetArraySize(json);
-	PrintToServer("357: %d", m_iKeys);
 
 	for(new i=0;i<m_iKeys;++i)
 	{
@@ -510,6 +509,36 @@ stock JSONSetArray(&Handle:json, const String:key[], Handle:value)
 	SetTrieValue(json, key, m_hObject);
 }
 
+stock JSONPushArrayString(&Handle:array, const String:value[])
+{
+	PushArrayCell(array, JSONCreateString(value));
+}
+
+stock JSONPushArrayObject(&Handle:array, Handle:value)
+{
+	PushArrayCell(array, JSONCreateObject(value));
+}
+
+stock JSONPushArrayArray(&Handle:array, Handle:value)
+{
+	PushArrayCell(array, JSONCreateArray(value));
+}
+
+stock JSONPushArrayBoolean(&Handle:array, bool:value)
+{
+	PushArrayCell(array, JSONCreateBoolean(value));
+}
+
+stock JSONPushArrayInteger(&Handle:array, value)
+{
+	PushArrayCell(array, JSONCreateInteger(value));
+}
+
+stock JSONPushArrayFloat(&Handle:array, Float:value)
+{
+	PushArrayCell(array, JSONCreateFloat(value));
+}
+
 stock Handle:JSONCreateString(const String:value[])
 {
 	new Handle:m_hObject = CreateTrie();
@@ -543,7 +572,6 @@ stock Handle:JSONCreateFloat(Float:value)
 	SetTrieValue(m_hObject, "value", value);
 	SetTrieValue(m_hObject, "type", Type_Float);
 	SetTrieValue(m_hObject, "size", sizeof(value));
-
 	return m_hObject;
 }
 
@@ -843,4 +871,22 @@ stock DestroyJSONArray(&Handle:array)
 			CloseHandle(m_hItem);
 	}
 	CloseHandle(array);
+}
+
+stock bool:RemoveFromJSON(&Handle:json, const String:key[])
+{
+	new Handle:m_hKeyArray = INVALID_HANDLE;
+	if(!GetTrieValue(json, "json_key_array", m_hKeyArray))
+		return false;
+	new idx = FindStringInArray(m_hKeyArray, key); // Fails if key was never set in key store.
+	if (idx == -1)
+		return false;
+	new Handle:m_hObject = INVALID_HANDLE;
+	if(!GetTrieValue(json, key, m_hObject)) // Fails if key was added to key array, but object wasn't added to object store.
+		return false;
+	if (!RemoveFromTrie(json, key)) // Fails if key never was set in object store.
+		return false;
+	RemoveFromArray(m_hKeyArray, idx);
+	DestroyJSON(m_hObject);
+	return true;
 }
