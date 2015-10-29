@@ -2,17 +2,22 @@
 #include <socket> // For talking to CouchDB
 #include <EasyJSON> // For interpreting CouchDB
 #include <l4d2_direct> // For getting team scores
+#undef REQUIRE_PLUGIN
+#include <l4d2lib> // For getting custom map distance
+#define REQUIRE_PLUGIN
+#include <left4downtown> // For getting default map distance
 #pragma semicolon 1
 
 #define ID_SIZE 64
 #define NAME_SIZE 256
+#define REV_SIZE 64
 #define ERROR_SIZE 256
 
 public Plugin:myinfo = {
 	name = "Nickname Tracker",
 	author = "Darkid",
 	description = "Players can get a list of the nicknames of active players.",
-	version = "3.3",
+	version = "3.4",
 	url = "www.github.com/jbzdarkid/L4D2_Statistics"
 };
 
@@ -31,6 +36,7 @@ public Plugin:myinfo = {
 }
 */
 new Handle:playerData;
+new Handle:playersWithNewData;
 new Handle:renamePlayers;
 
 new String:teamA[4][ID_SIZE];
@@ -43,20 +49,20 @@ new teamAPlayerCount;
 new teamBPlayerCount;
 
 new bool:isFirstHalf;
-new bool:isNewGame;
 new bool:didRoundEnd;
 
 public OnPluginStart() {
 	playerData = CreateJSON();
+	playersWithNewData = CreateArray(ID_SIZE);
 
 	HookEvent("player_team", PlayerTeam);
 	HookEvent("player_left_start_area", RoundStart);
 	HookEvent("round_end", RoundEnd);
 
 	renamePlayers = CreateConVar("mm_rename_players", "Rename players to their given nickname when they join.", "1");
-	isNewGame = true;
 
 	RegServerCmd("mm_usage", GetUsage);
+	RegServerCmd("mm_debug", Debug);
 	RegConsoleCmd("mm_nicknames", GetNicknames);
 	RegConsoleCmd("mm_setnickname", SetNickname);
 }
@@ -65,9 +71,17 @@ public OnPluginStart() {
 // Truncates off the STEAM_1:X: from steam names.
 GetSteamId(client, String:output[]) {
 	new String:steamId[20];
-	GetClientAuthString(client, steamId, sizeof(steamId));
+	GetClientAuthString(client, steamId, ID_SIZE);
 	strcopy(output, 9, steamId[10]);
 	output[9] = 0;
+}
+
+// Gets a player's name and returns it in url-safe format.
+GetPlayerName(client, String:output[]) {
+	GetClientName(client, output, NAME_SIZE);
+	new doubleNameSize = NAME_SIZE*2;
+	ReplaceString(output, doubleNameSize, "\\", "\\\\", false);
+	ReplaceString(output, doubleNameSize, "\"", "\\\"", false);
 }
 
 // Changes a player's name.
@@ -90,7 +104,18 @@ Handle:ParseHTMLResponse(String:html[], length) {
 }
 
 // **************** Commands ****************
-public Action:GetUsage(args) {}
+public Action:GetUsage(args) {
+	new Handle:temp = CreateTrieSnapshot(playerData);
+	PrintToServer("[MM] There are %d players being tracked.", TrieSnapshotLength(temp));
+	CloseHandle(temp);
+}
+
+public Action:Debug(args) {
+	decl String:print[2048];
+	EncodeJSON(playerData, print, sizeof(print));
+	PrintToServer(print);
+}
+
 public Action:GetNicknames(client, args) {}
 public Action:SetNickname(client, args) {}
 
@@ -103,6 +128,7 @@ public PlayerTeam(Handle:event, const String:name[], bool:dontBroadcast) {
 	if (GetEventInt(event, "oldteam") != 0) return;
 	decl String:steamId[ID_SIZE];
 	GetSteamId(client, steamId);
+	if (FindStringInArray(playersWithNewData, steamId) != -1) return;
 	new Handle:socket = SocketCreate(SOCKET_TCP, SocketError);
 	SocketSetArg(socket, client);
 	SocketConnect(socket, GetPlayerDataQuery, GetPlayerDataResponse, SocketClosed, "l4d2statistics.cloudant.com", 80);
@@ -112,7 +138,6 @@ public MapChange() {
 	isFirstHalf = false;
 	teamAScore = L4D2Direct_GetVSCampaignScore(0);
 	teamBScore = L4D2Direct_GetVSCampaignScore(1);
-	isNewGame = (teamAScore == 0) && (teamBScore == 0);
 }
 
 public RoundStart(Handle:event, const String:name[], bool:dontBroadcast) {
@@ -145,56 +170,88 @@ public RoundEnd(Handle:event, const String:name[], bool:dontBroadcast) {
 		teamBScoreThisRound = L4D2Direct_GetVSCampaignScore(1) - teamBScore;
 		LogMessage("[MM] Second half ended. Survivors scored %d points.", teamBScoreThisRound);
 	}
-	new Float:teamAELOAverage = 0.0;
+	PrintToChatAll("Team A (%d players) Score: %d", teamAPlayerCount, teamAScoreThisRound);
+	PrintToChatAll("Team B (%d players) Score: %d", teamBPlayerCount, teamBScoreThisRound);
+
+	if (teamAPlayerCount == 0 || teamBPlayerCount == 0) return;
+
+	// Somehow players ELOs are getting modified... early
+	new teamAELOAverage = 0;
+	new teamBELOAverage = 0;
 	for (new i=0; i<teamAPlayerCount; i++) {
 		decl Handle:playerInfo;
-		JSONGetObject(playerData, teamA[i], playerInfo);
 		decl playerELO;
+		JSONGetObject(playerData, teamA[i], playerInfo);
 		JSONGetInteger(playerInfo, "elo", playerELO);
-		teamAELOAverage += 1.0*playerELO/teamAPlayerCount;
+		teamAELOAverage += playerELO;
 	}
-	new Float:teamBELOAverage = 0.0;
 	for (new i=0; i<teamBPlayerCount; i++) {
 		decl Handle:playerInfo;
-		JSONGetObject(playerData, teamB[i], playerInfo);
 		decl playerELO;
+		JSONGetObject(playerData, teamB[i], playerInfo);
 		JSONGetInteger(playerInfo, "elo", playerELO);
-		teamBELOAverage += 1.0*playerELO/teamBPlayerCount;
+		teamBELOAverage += playerELO;
+	}
+	teamAELOAverage /= teamAPlayerCount;
+	teamBELOAverage /= teamBPlayerCount;
+	PrintToChatAll("Team A average ELO: %d", teamAELOAverage);
+	PrintToChatAll("Team B average ELO: %d", teamBELOAverage);
+
+	new Float:mapDistance = 1.0*L4D2_GetMapValueInt("max_distance", -1);
+	if (mapDistance == -1.0) mapDistance = 1.0*L4D_GetVersusMaxCompletionScore();
+	decl Float:teamADistance, Float:teamABonus, Float:teamBDistance, Float:teamBBonus;
+	if (teamAScoreThisRound < mapDistance) {
+		teamADistance = 1.0*teamAScoreThisRound;
+		teamABonus = mapDistance;
+	} else {
+		teamADistance = mapDistance;
+		teamABonus = 1.0*teamAScoreThisRound;
+	}
+	if (teamBScoreThisRound < mapDistance) {
+		teamBDistance = 1.0*teamBScoreThisRound;
+		teamBBonus = mapDistance;
+	} else {
+		teamBDistance = mapDistance;
+		teamBBonus = 1.0*teamBScoreThisRound;
 	}
 
-	decl min;
-	if (teamAScoreThisRound < teamBScoreThisRound) {
-		min = teamAScoreThisRound;
-	} else {
-		min = teamBScoreThisRound;
-	}
-	if (min <= 0) min = 1; // Prevents division by zero
-	new Float:scoreDifference = 100.0*(teamAScoreThisRound - teamBScoreThisRound)/min;
-	new Handle:players = CreateArray(ID_SIZE);
+	new Float:distancePoints = teamADistance - teamBDistance;
+	new Float:bonusPoints = Pow(SquareRoot(teamABonus) - SquareRoot(teamBBonus), 2.0);
+	new scoreDifference = RoundToFloor(distancePoints + (teamABonus < teamBBonus ? -1 : 1) * bonusPoints);
+
 	for (new i=0; i<teamAPlayerCount; i++) {
 		decl Handle:playerInfo;
-		JSONGetObject(playerData, teamA[i], playerInfo);
 		decl playerELO;
+		JSONGetObject(playerData, teamA[i], playerInfo);
 		JSONGetInteger(playerInfo, "elo", playerELO);
-		new Float:adjustment = teamBELOAverage - playerELO + scoreDifference;
-		playerELO = RoundToFloor((playerELO*128 + adjustment)/128);
+		new adjustment = teamBELOAverage - playerELO + scoreDifference;
+		PrintToChatAll("Player %s adjustment: %d = %d - %d + %d", teamA[i], adjustment, teamBELOAverage, playerELO, scoreDifference);
+		new copy = playerELO;
+		playerELO += adjustment/10;
+		PrintToChatAll("Player %s ELO change: %d -> %d", teamA[i], copy, playerELO);
 		JSONSetInteger(playerInfo, "elo", playerELO);
-		JSONSetObject(playerData, teamA[i], playerInfo);
-		PushArrayString(players, teamA[i]);
+		new test;
+		JSONGetInteger(playerInfo, "elo", test);
+		PrintToChatAll("<235> %d = %d", playerELO, test);
+
+		PushArrayString(playersWithNewData, teamA[i]);
 	}
 	for (new i=0; i<teamBPlayerCount; i++) {
 		decl Handle:playerInfo;
-		JSONGetObject(playerData, teamB[i], playerInfo);
 		decl playerELO;
+		JSONGetObject(playerData, teamB[i], playerInfo);
 		JSONGetInteger(playerInfo, "elo", playerELO);
-		new Float:adjustment = teamAELOAverage - playerELO + scoreDifference;
-		playerELO = RoundToFloor((playerELO*128 + adjustment)/128);
+		new adjustment = teamAELOAverage - playerELO - scoreDifference;
+		PrintToChatAll("Player %s adjustment: %d = %d - %d - %d", teamB[i], adjustment, teamAELOAverage, playerELO, scoreDifference);
+		new copy = playerELO;
+		playerELO += adjustment/10;
+		PrintToChatAll("Player %s ELO change: %d -> %d", teamB[i], copy, playerELO);
 		JSONSetInteger(playerInfo, "elo", playerELO);
-		JSONSetObject(playerData, teamB[i], playerInfo);
-		PushArrayString(players, teamB[i]);
+		PushArrayString(playersWithNewData, teamB[i]);
 	}
+	if (GetArraySize(playersWithNewData) == 0) return;
 	new Handle:socket = SocketCreate(SOCKET_TCP, SocketError);
-	SocketSetArg(socket, players);
+	SocketSetArg(socket, playersWithNewData);
 	SocketConnect(socket, UploadPlayerDataQuery, UploadPlayerDataResponse, SocketClosed, "l4d2statistics.cloudant.com", 80);
 }
 
@@ -202,7 +259,6 @@ public RoundEnd(Handle:event, const String:name[], bool:dontBroadcast) {
 // Called from PlayerJoin. It queries CouchDB for all info about a player.
 public GetPlayerDataQuery(Handle:socket, any:client) {
 	if (!IsClientInGame(client) || IsFakeClient(client)) return;
-	PrintToServer("GetPlayerDataQuery");
 	decl String:steamId[ID_SIZE];
 	GetSteamId(client, steamId);
 	decl String:request[128];
@@ -218,30 +274,33 @@ public GetPlayerDataQuery(Handle:socket, any:client) {
 // Called from GetPlayerDataQuery. It handles the response from CouchDB about player data, and saves it locally. If the response from couchdb is "error":"not_found", then we will create data for a new user.
 public GetPlayerDataResponse(Handle:socket, String:data[], dataSize, any:client) {
 	if (!IsClientInGame(client) || IsFakeClient(client)) return;
-	PrintToServer("GetPlayerDataResponse");
 	new Handle:json = ParseHTMLResponse(data, dataSize);
 	decl String:steamId[ID_SIZE];
 	GetSteamId(client, steamId);
 	decl String:error[ERROR_SIZE];
 	if (!JSONGetString(json, "error", error, ERROR_SIZE)) {
+		decl Handle:playerInfo;
+		if (JSONGetObject(playerData, steamId, playerInfo)) {
+			DestroyJSON(playerInfo); // Don't duplicate local data.
+		}
 		decl Handle:names;
 		JSONGetArray(json, "names", names);
 		JSONSetObject(playerData, steamId, json);
 		LogMessage("[MM] Downloaded playerdata for %N (%s).", client, steamId);
 		decl String:newName[NAME_SIZE];
-		GetArrayString(names, 0, newName, NAME_SIZE);
-		LogMessage("[MM] Player %N has %d nicknames, primary is %s.", client, GetArraySize(names), newName);
+		JSONGetArrayString(names, 0, newName, NAME_SIZE);
+		LogMessage("[MM] Player %N has %d nicknames, primary is %s.", client, GetArraySize(names), newName); // Fix this
 		if (GetConVarBool(renamePlayers)) {
 			RenamePlayer(client, newName);
 		}
 	} else if (strcmp(error, "not_found") != 0) {
-		decl String:reason[256];
-		JSONGetString(json, "reason", reason, sizeof(reason));
+		decl String:reason[ERROR_SIZE];
+		JSONGetString(json, "reason", reason, ERROR_SIZE);
 		ThrowError("[MM] CouchDB Error: %s\n[MM] Reason: %s", error, reason);
 	} else {
 		LogMessage("[MM] A new challenger arrives: %N", client);
-		decl String:ign[NAME_SIZE];
-		GetClientName(client, ign, NAME_SIZE); // Here is where we strip invalid chars.
+		decl String:ign[NAME_SIZE*2]; // To allow for escapement, we need twice the space.
+		GetPlayerName(client, ign);
 		new Handle:names = CreateArray(1);
 		PushArrayCell(names, JSONCreateString(ign));
 		new Handle:playerInfo = CreateJSON();
@@ -249,34 +308,29 @@ public GetPlayerDataResponse(Handle:socket, String:data[], dataSize, any:client)
 		JSONSetArray(playerInfo, "names", names);
 		JSONSetInteger(playerInfo, "elo", 1000);
 		JSONSetObject(playerData, steamId, playerInfo);
-		new Handle:players = CreateArray(ID_SIZE);
-		PushArrayString(players, steamId);
-		socket = SocketCreate(SOCKET_TCP, SocketError);
-		SocketSetArg(socket, players);
-		SocketConnect(socket, UploadPlayerDataQuery, UploadPlayerDataResponse, SocketClosed, "l4d2statistics.cloudant.com", 80);
+		PushArrayString(playersWithNewData, steamId);
 	}
 }
 
 // Called from PlayerJoin if there's a new player. Called from SetNickname. Called from RoundEnd. This sends an update to CouchDB about any number of players' data. any:players should be an adt_array containing steam ids.
 public UploadPlayerDataQuery(Handle:socket, any:players) {
-	PrintToServer("UploadPlayerDataQuery");
 	new Handle:documentArray = CreateArray(1);
 	for (new i=0; i<GetArraySize(players); i++) {
 		decl String:steamId[ID_SIZE];
 		GetArrayString(players, i, steamId, ID_SIZE);
 		decl Handle:playerInfo;
 		JSONGetObject(playerData, steamId, playerInfo);
-		PushArrayCell(documentArray, playerInfo);
+		PushArrayCell(documentArray, JSONCreateObject(playerInfo));
 	}
 	new Handle:payload = CreateJSON();
 	JSONSetArray(payload, "docs", documentArray);
 	decl String:payloadStr[2048];
 	EncodeJSON(payload, payloadStr, sizeof(payloadStr));
 	decl String:request[2048];
-	// PUT /nicknames/32356809 HTTP/1.1
+	// POST /nicknames/32356809 HTTP/1.1
 	// Host: l4d2statistics.cloudant.com
 	// Accept: */*
-	// Content-Length: 20
+	// Content-Length: 200
 	// Content-Type: application/json
 	//
 	// [
@@ -293,68 +347,43 @@ public UploadPlayerDataQuery(Handle:socket, any:players) {
 	//			"elo":1001
 	//  	}
 	// ]
-	Format(request, sizeof(request), "PUT /nicknames/_bulk_docs HTTP/1.1\nHost: l4d2statistics.cloudant.com\nAccept: */*\nContent-Length: %d\nContent-Type: application/json\n\n%s\n", strlen(payloadStr), payloadStr);
+	Format(request, sizeof(request), "POST /nicknames/_bulk_docs HTTP/1.1\nHost: l4d2statistics.cloudant.com\nAccept: */*\nContent-Length: %d\nContent-Type: application/json\n\n%s\n", strlen(payloadStr), payloadStr);
 	SocketSend(socket, request);
 }
 
 // Called from UploadPlayerDataQuery. Handles CouchDB conflicts, updates revision number on success to prevent further conflicts.
-public UploadPlayerDataResponse(Handle:socket, String:data[], dataSize, any:playerInfo) {
+public UploadPlayerDataResponse(Handle:socket, String:data[], dataSize, any:players) {
 	PrintToServer("UploadPlayerDataResponse");
+	PrintToServer("%s", data);
 	new Handle:json = ParseHTMLResponse(data, dataSize);
-	PrintToServer(data);
 	PrintToServer("%d", GetArraySize(json));
-
-
-	/*
-	[
-	  {
-		"ok": true,
-		"id": "FishStew",
-		"rev":" 1-967a00dff5e02add41819138abb3284d"
-	  },
-	  {
-		"ok": true,
-		"id": "LambStew",
-		"rev": "3-f9c62b2169d0999103e9f41949090807"
-	  }
-	]
-	*/
-	/*
-	decl String:error[ERROR_SIZE];
-	if (JSONGetString(json, "error", error, ERROR_SIZE)) {
-		if (strcmp(error, "conflict")) {
+	for (new i=0; i<GetArraySize(json); i++) {
+		new Handle:playerInfo = GetArrayCell(json, i);
+		decl String:error[ERROR_SIZE];
+		if (!JSONGetString(json, "error", error, ERROR_SIZE)) {
+			decl String:steamId[ID_SIZE];
+			JSONGetString(playerInfo, "id", steamId, ID_SIZE);
+			decl String:rev[REV_SIZE];
+			JSONGetString(playerInfo, "rev", rev, REV_SIZE);
+			JSONGetObject(playerData, steamId, playerInfo);
+			JSONSetString(playerInfo, "_rev", rev);
+			RemoveFromArray(players, FindStringInArray(players, steamId));
+		} else if (strcmp(error, "conflict") == 0) {
 			ThrowError("[MM] CouchDB upload conflict."); // I'm not sure what to do about this.
 		} else {
-			decl String:reason[256];
-			JSONGetString(json, "reason", reason, sizeof(reason));
+			decl String:reason[ERROR_SIZE];
+			JSONGetString(json, "reason", reason, ERROR_SIZE);
 			ThrowError("[MM] CouchDB Error: %s\n[MM] Reason: %s", error, reason);
 		}
-	} else {
-		decl bool:ok;
-		JSONGetBoolean(json, "ok", ok);
-		if (!ok) {
-			ThrowError("<297> %s", data); // I don't know why this would happen.
-		} else {
-			decl String:rev[64];
-			JSONGetString(json, "rev", rev, sizeof(rev));
-			decl String:steamId[ID_SIZE];
-			JSONGetString(playerInfo, "_id", steamId, ID_SIZE);
-			JSONSetString(playerInfo, "_rev", rev);
-			JSONSetObject(playerData, steamId, playerInfo);
-			LogMessage("[MM] %s has been added to the database.", steamId);
-		}
 	}
-	*/
 }
 
 public SocketClosed(Handle:socket, any:arg) {
 	CloseHandle(socket);
-	DestroyJSON(arg);
 }
 
 public SocketError(Handle:socket, errorType, errorNum, any:arg) {
 	PrintToServer("Socket error %d (Type %d)", errorNum, errorType);
 	LogMessage("Socket error %d (Type %d)", errorNum, errorType);
 	CloseHandle(socket);
-	DestroyJSON(arg);
 }
